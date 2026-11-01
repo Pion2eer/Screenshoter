@@ -1,0 +1,8 @@
+# Build output
+*.exe
+*.pdb
+bin/
+obj/
+
+# Local agent settings
+.claude/settings.local.json
