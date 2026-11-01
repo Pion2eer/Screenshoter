@@ -20,7 +20,7 @@ namespace Screenshoter
         readonly NotifyIcon tray;
         bool overlayOpen;
 
-        ToolStripMenuItem miNewBatch, miFiles, miStitch, miNumbers, miResetAfterPaste, miWinShiftS, miPrtSc, miAutostart, miSystemSnip;
+        ToolStripMenuItem miNewBatch, miRestore, miFiles, miStitch, miNumbers, miResetAfterPaste, miWinShiftS, miPrtSc, miAutostart, miSystemSnip;
 
         public TrayApp()
         {
@@ -92,9 +92,13 @@ namespace Screenshoter
                         int n;
                         using (Bitmap res = f.Result) n = batch.Add(res);
                         string mode = settings.Stitch ? " (склеены в одну картинку)" : "";
-                        Toast.ShowText(n == 1
+                        string text = n == 1
                             ? "Скрин 1 в буфере. Ctrl+V — вставить, " + HotkeyText() + " — добавить ещё."
-                            : "В пачке " + n + " скрин(а/ов)" + mode + ". Ctrl+V — вставить все.");
+                            : "В пачке " + n + " скрин(а/ов)" + mode + ". Ctrl+V — вставить все.";
+                        if (batch.StartedAfterPaste)
+                            text = "Прошлую пачку ты уже вставил, это начало новой.\n" + text +
+                                   "\nВернуть прошлую: меню в трее.";
+                        Toast.ShowText(text);
                     }
                 }
             }
@@ -123,6 +127,12 @@ namespace Screenshoter
             ToolStripMenuItem shot = Item(m, "Сделать скриншот", delegate { invoker.BeginInvoke(new Action(StartCapture)); });
             shot.Font = new Font(shot.Font, FontStyle.Bold);
             miNewBatch = Item(m, "Начать новую пачку", delegate { batch.StartNew(); UpdateTooltip(); Toast.ShowText("Пачка очищена."); });
+            miRestore = Item(m, "Вернуть прошлую пачку в буфер", delegate
+            {
+                int n = batch.RestorePrevious();
+                UpdateTooltip();
+                Toast.ShowText(n > 0 ? "Вернул прошлую пачку: " + n + " скрин(а/ов) в буфере." : "Прошлой пачки нет.");
+            });
             m.Items.Add(new ToolStripSeparator());
 
             miFiles = Item(m, "Вставлять отдельными картинками", delegate { SetStitch(false); });
@@ -148,6 +158,9 @@ namespace Screenshoter
                 int n = batch.Count;
                 miNewBatch.Text = "Начать новую пачку" + (n > 0 ? " (сейчас скринов: " + n + ")" : "");
                 miNewBatch.Enabled = n > 0;
+                int p = batch.PreviousCount;
+                miRestore.Text = "Вернуть прошлую пачку в буфер" + (p > 0 ? " (скринов: " + p + ")" : "");
+                miRestore.Enabled = p > 0;
                 miFiles.Checked = !settings.Stitch;
                 miStitch.Checked = settings.Stitch;
                 miNumbers.Checked = settings.NumberScreens;

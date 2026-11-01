@@ -705,7 +705,16 @@ namespace Screenshoter
                 else if (d.Kind == ShapeKind.Arrow)
                 {
                     Rectangle r = Norm(d.A, d.B);
-                    if (r.Width + r.Height <= 8) { Invalidate(ShapeArea(d)); return; }
+                    if (r.Width + r.Height <= 8)
+                    {
+                        // просто клик стрелкой — ставим обычную подпись в этом месте
+                        d.Kind = ShapeKind.Label;
+                        d.A = downPt;
+                        d.HasArrow = false;
+                        shapes.Add(d);
+                        BeginEdit(d, true);
+                        return;
+                    }
                     // стрелка нарисована: на её хвосте сразу открываем поле для текста
                     Rectangle before = ShapeArea(d);
                     d.Kind = ShapeKind.Label;
@@ -736,7 +745,7 @@ namespace Screenshoter
             {
                 selecting = false;
                 if (sel.Width < 6 || sel.Height < 6) sel = MonitorAt(e.Location);
-                if (tool == Tool.Select) tool = Tool.Label; // после выделения сразу можно ставить подписи
+                if (tool == Tool.Select) tool = Tool.Arrow; // после выделения сразу можно ставить стрелку с подписью
                 UpdateToolButtons();
                 toolbar.Visible = true;
                 LayoutToolbar();
@@ -886,7 +895,7 @@ namespace Screenshoter
         {
             if (editing != null) CommitEdit();
             sel = MonitorAt(CursorClient());
-            if (tool == Tool.Select) tool = Tool.Label;
+            if (tool == Tool.Select) tool = Tool.Arrow;
             UpdateToolButtons();
             toolbar.Visible = true;
             LayoutToolbar();

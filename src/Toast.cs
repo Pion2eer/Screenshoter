@@ -43,7 +43,7 @@ namespace Screenshoter
 
             l.Click += delegate { Close(); };
             Click += delegate { Close(); };
-            timer.Interval = 2600;
+            timer.Interval = Math.Min(7000, 2600 + text.Length * 30);
             timer.Tick += delegate { Close(); };
             timer.Start();
         }
