@@ -69,7 +69,8 @@ namespace Screenshoter
         Shape moving; Point moveOffset; bool moved; Point downPt;
         Shape editing; string editingOriginal; bool editingIsNew;
 
-        TextBox editor;
+        TextBox editor;                 // невидимое поле ввода: текст, курсор и выделение рисуем сами на плашке
+        Timer caretTimer; bool caretOn;
         FlowLayoutPanel toolbar;
         FlatButton btnSelect, btnLabel, btnFrame, btnMarker, btnArrow, btnPencil;
         Label lblInfo;
@@ -181,7 +182,19 @@ namespace Screenshoter
             editor.Visible = false;
             editor.Cursor = Cursors.IBeam;
             editor.TextChanged += delegate { OnEditorChanged(); };
+            // стрелки, Home/End, Shift+… двигают курсор, не меняя текст — перерисовываем после обработки клавиши
+            editor.KeyDown += delegate { BeginInvoke((MethodInvoker)RefreshCaret); };
+            editor.KeyUp += delegate { RefreshCaret(); };
             Controls.Add(editor);
+
+            caretTimer = new Timer();
+            caretTimer.Interval = SystemInformation.CaretBlinkTime > 0 ? SystemInformation.CaretBlinkTime : 530;
+            caretTimer.Tick += delegate
+            {
+                if (editing == null) return;
+                caretOn = !caretOn;
+                Invalidate(LabelRect(editing));
+            };
         }
 
         void SetTool(Tool t)
@@ -498,7 +511,73 @@ namespace Screenshoter
             // маркеры под всем, подписи поверх всего
             foreach (Shape s in shapes) if (s.Kind == ShapeKind.Marker) DrawShape(g, s, ox, oy, false);
             foreach (Shape s in shapes) if (s.Kind == ShapeKind.Frame || s.Kind == ShapeKind.Arrow || s.Kind == ShapeKind.Pencil) DrawShape(g, s, ox, oy, false);
-            foreach (Shape s in shapes) if (s.Kind == ShapeKind.Label) DrawShape(g, s, ox, oy, onScreen && s == editing);
+            foreach (Shape s in shapes) if (s.Kind == ShapeKind.Label) DrawShape(g, s, ox, oy, false);
+            if (onScreen && editing != null) DrawEditorState(g);
+        }
+
+        // ---------- курсор и выделение редактируемой подписи ----------
+
+        Point TextOrigin(Shape s)
+        {
+            Rectangle r = LabelRect(s);
+            return new Point(r.X + Pad + 2, r.Y + Pad / 2 + 2);
+        }
+
+        int CharWidth(char c)
+        {
+            return TextRenderer.MeasureText(c.ToString(), labelFont, Size.Empty, TextFormatFlags.NoPadding).Width;
+        }
+
+        // Позиция символа i внутри текста (левый верхний угол), по раскладке самого поля ввода.
+        Point CharPos(int i)
+        {
+            string t = editor.Text;
+            if (t.Length == 0) return Point.Empty;
+            Point p0 = editor.GetPositionFromCharIndex(0);
+            if (i < t.Length)
+            {
+                Point p = editor.GetPositionFromCharIndex(i);
+                return new Point(p.X - p0.X, p.Y - p0.Y);
+            }
+            // позиция «после последнего символа» поле не отдаёт — считаем от предпоследней
+            char last = t[t.Length - 1];
+            Point prev = CharPos(t.Length - 1);
+            if (last == '\n') return new Point(0, prev.Y + labelFont.Height);
+            return new Point(prev.X + CharWidth(last), prev.Y);
+        }
+
+        void DrawEditorState(Graphics g)
+        {
+            Point o = TextOrigin(editing);
+            int lineH = labelFont.Height;
+            if (editor.SelectionLength > 0)
+            {
+                string t = editor.Text;
+                int from = editor.SelectionStart, to = Math.Min(t.Length, from + editor.SelectionLength);
+                using (SolidBrush b = new SolidBrush(Color.FromArgb(90, Accent)))
+                {
+                    for (int i = from; i < to; i++)
+                    {
+                        if (t[i] == '\r' || t[i] == '\n') continue;
+                        Point p = CharPos(i);
+                        g.FillRectangle(b, o.X + p.X, o.Y + p.Y, CharWidth(t[i]), lineH);
+                    }
+                }
+            }
+            else if (caretOn)
+            {
+                Point p = CharPos(editor.SelectionStart);
+                using (SolidBrush b = new SolidBrush(Color.Black))
+                    g.FillRectangle(b, o.X + p.X, o.Y + p.Y, Math.Max(1, (int)Math.Round(1.5f * scale)), lineH);
+            }
+        }
+
+        void RefreshCaret()
+        {
+            if (editing == null) return;
+            caretOn = true;
+            caretTimer.Stop(); caretTimer.Start();
+            Invalidate(LabelRect(editing));
         }
 
         protected override void OnPaintBackground(PaintEventArgs e) { }
@@ -790,16 +869,19 @@ namespace Screenshoter
             editor.BringToFront();
             editor.Focus();
             editor.SelectionStart = editor.Text.Length;
+            caretOn = true;
+            caretTimer.Start();
             Invalidate(ShapeArea(s));
         }
 
         void PlaceEditor()
         {
-            Rectangle r = LabelRect(editing);
+            // Само поле убрано за край формы: у TextBox нет прозрачного фона, и раньше поверх
+            // закруглённой плашки торчал его прямоугольник. Ширина = ширине переноса подписи,
+            // чтобы строки в поле переносились так же, как на плашке; запас по высоте — чтобы не прокручивалось.
             Size t = MeasureText(editing.Text);
-            editor.Location = new Point(r.X + Pad + 2, r.Y + Pad / 2 + 2);
-            // запас по ширине и в одну строку по высоте, чтобы поле не прокручивалось при переносе
-            editor.Size = new Size(t.Width + (int)(24 * scale), t.Height + labelFont.Height + 2);
+            editor.Size = new Size(MaxTextWidth, t.Height + labelFont.Height * 2);
+            editor.Location = new Point(-editor.Width - 10000, 0);
         }
 
         void OnEditorChanged()
@@ -819,6 +901,7 @@ namespace Screenshoter
             editing = null;
             s.Text = editor.Text.TrimEnd();
             editor.Visible = false;
+            caretTimer.Stop();
             Rectangle area = ShapeArea(s);
             if (s.Text.Length == 0)
             {
@@ -836,6 +919,7 @@ namespace Screenshoter
             Shape s = editing;
             editing = null;
             editor.Visible = false;
+            caretTimer.Stop();
             Rectangle area = ShapeArea(s);
             if (editingIsNew || editingOriginal.Length == 0)
             {
@@ -941,6 +1025,7 @@ namespace Screenshoter
             if (disposing)
             {
                 dimmed.Dispose();
+                caretTimer.Dispose();
                 labelFont.Dispose();
                 badgeFont.Dispose();
                 uiFont.Dispose();
