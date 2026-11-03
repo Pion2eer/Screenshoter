@@ -1,50 +1,128 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+# Конституция проекта «Скриншотер»
 
 ## Core Principles
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+### I. Лёгкость и ноль зависимостей
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+- Приложение — один `Screenshoter.exe` на C# WinForms под .NET Framework 4.8, который уже есть
+  в Windows 10/11. Установщик, NuGet-пакеты и сторонние библиотеки НЕ ДОПУСКАЮТСЯ.
+- Код ДОЛЖЕН собираться встроенным в Windows компилятором
+  (`%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe`) через `build.bat`. Из этого следует
+  синтаксис не новее C# 5: нельзя `$"..."`, `?.`, `nameof`, члены через `=>`,
+  инициализаторы автосвойств, `out var`, кортежи и т. п.
+- Можно использовать только API, которые есть в .NET Framework 4.8. Сборка вне Windows (mono `mcs`)
+  ДОЛЖНА идти против эталонных сборок Microsoft (`Microsoft.NETFramework.ReferenceAssemblies.net48`),
+  а не против библиотек Mono: однажды это уже привело к `MissingMethodException`
+  (`string.TrimEnd()` без аргументов) на машине пользователя.
+- Работающий в фоне процесс должен оставаться маленьким: иконка в трее, без постоянной работы
+  по таймерам, ресурсы освобождаются после каждого снимка.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+Обоснование: пользователь хочет «лёгкую» программу, которую можно просто скопировать и запустить.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### II. Хук клавиатуры никогда не блокируется
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+- Перехват Win+Shift+S (и по желанию PrtSc) делается низкоуровневым хуком `WH_KEYBOARD_LL`
+  в отдельном фоновом потоке со своим циклом сообщений (`KeyboardHook`).
+- Обработчик хука ДОЛЖЕН возвращаться сразу: всю работу он передаёт в UI-поток через
+  `Control.BeginInvoke`. Блокирующие вызовы, работа с файлами, буфером обмена или GDI внутри
+  хука ЗАПРЕЩЕНЫ.
+- Нажатие, которое мы перехватили, глушится целиком, включая отпускание клавиши и автоповтор.
+  После перехвата сочетания с Win отправляется фиктивная клавиша `0xE8`, чтобы не открывалось
+  меню «Пуск». Собственные (injected) события хук игнорирует.
+- Если системные «Ножницы» всё равно срабатывают, есть запасной путь: опция в трее, которая
+  пишет `DisabledHotkeys` в реестр. Она выполняется только с явного подтверждения пользователя.
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+Обоснование: зависший хук Windows обходит, и тогда вместе с нашим окном открываются системные
+«Ножницы».
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+### III. Что видишь, то и сохраняешь
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+- Процесс работает в режиме Per-Monitor DPI v2 (с откатом на более старые режимы). Снимок,
+  окно-оверлей и все координаты задаются в физических пикселях виртуального экрана.
+- Экран замораживается в момент нажатия клавиш. Оверлей рисует этот кадр, а не живой экран.
+- Пометки (плашка, стрелка, рамка, маркер, карандаш, номер) рисуются ОДНОЙ и той же функцией
+  (`DrawShape` / `DrawAllShapes`) и на экране, и в итоговом PNG. Отдельная логика отрисовки
+  для сохранения ЗАПРЕЩЕНА.
+- Размеры шрифтов, толщины линий и отступы умножаются на коэффициент DPI (`scale`).
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+Обоснование: пользователь ставит подписи для ИИ, и результат должен в точности совпадать с тем,
+что он видел на экране.
+
+### IV. Буфер обмена — это контракт с чатами ИИ
+
+- Каждый снимок сохраняется PNG-файлом в `%TEMP%\Screenshoter\<пачка>\screenshot-N.png`.
+- В режиме по умолчанию в буфер кладётся список файлов (`CF_HDROP`), а также
+  `Preferred DropEffect = copy` и служебный маркер `ScreenshoterBatchId`. Так одним Ctrl+V
+  прикрепляются все снимки пачки.
+- Запасной режим «склейка» кладёт одно длинное изображение (`Bitmap` + `PNG`).
+- Текст в буфер НЕ кладётся: иначе поле ввода вставит текст вместо файлов. Подписи
+  существуют только как пиксели на картинке.
+- Снимки из пачки НЕ ДОЛЖНЫ пропадать незаметно. Пачка сбрасывается только после вставки
+  именно её по Ctrl+V или Shift+Insert (в этот момент буфер наш) или по кнопке «Новая пачка».
+  Чужая запись в буфер (Parsec, менеджеры буфера, копирование текста) пачку не сбрасывает:
+  следующий снимок снова кладёт в буфер всю пачку. Ctrl+V внутри оверлея не считается.
+- Прошлую пачку всегда можно вернуть из меню трея. Когда новая пачка началась после вставки
+  старой, пользователь видит об этом уведомление.
+- Временные папки старше 3 суток удаляются при запуске.
+
+Обоснование: это главная функция продукта, ради которой он сделан.
+
+### V. Не мешать пользователю
+
+- Программа живёт в трее. Уведомления (`Toast`) не забирают фокус: `WS_EX_NOACTIVATE`,
+  `ShowWithoutActivation`.
+- В оверлее Esc всегда отменяет (или заканчивает ввод подписи), Enter / Ctrl+Enter сохраняет.
+  Кнопки панели не забирают фокус (`FlatButton`, без `Selectable`).
+- Ошибки показываются уведомлением. Приложение не должно падать: исключения на верхнем уровне
+  ловятся (`Application.ThreadException`, `try/catch` вокруг снимка).
+- Одновременно работает только один экземпляр (mutex).
+- Настройки хранятся в `%APPDATA%\Screenshoter\settings.ini` (ключ=значение). Автозапуск
+  делается через `HKCU\...\Run`.
+
+## Технические ограничения и визуальный стиль
+
+- Стек: C# 5, WinForms, GDI+, P/Invoke в `user32` / `kernel32` / `shcore`. Все P/Invoke
+  объявляются только в `Native.cs`.
+- Исходники хранятся в UTF-8 с BOM и окончаниями строк CRLF (`csc /codepage:65001`).
+  Комментарии в коде и весь интерфейс — на русском.
+- Палитра: жёлтый `#FFDD00`, тёмный `#191919`, акцент выделения `#0078D7`. Плашки скруглённые
+  (радиус около 7 px × scale), без рамки, полупрозрачные (alpha ≈ 185). Маркер — alpha ≈ 80.
+  Шрифт подписей — обычный (не жирный) Segoe UI 17 px × scale.
+- Стрелка с подписью тянется от объекта (остриё) к месту текста. Линия начинается на краю
+  плашки, в точке на прямой «центр плашки → цель». Длинный текст переносится сам, ширина
+  не больше 420 px × scale.
+- После выделения области по умолчанию выбран инструмент «Стрелка»; клик им без протягивания
+  ставит подпись без стрелки.
+- Горячие клавиши оверлея: T подпись, A стрелка, R рамка, M маркер, P карандаш, S область,
+  F весь монитор, N новая пачка, Ctrl+Z отмена. Новые инструменты получают свою букву и кнопку.
+- Готовый `.exe` в git не коммитится.
+
+## Процесс разработки и проверки
+
+- Перед каждым коммитом код ДОЛЖЕН собираться без ошибок как C# 5 против эталонных сборок
+  .NET 4.8: `mcs -langversion:5 -nostdlib -noconfig -target:winexe -codepage:utf8
+  -r:<ref>/mscorlib.dll -r:<ref>/System.dll -r:<ref>/System.Drawing.dll
+  -r:<ref>/System.Windows.Forms.dll -win32icon:src/app.ico
+  -resource:src/app.ico,Screenshoter.app.ico src/*.cs`, либо через `build.bat` на Windows.
+- Любое изменение отрисовки проверяется рендером в PNG: через mono + Xvfb нужно вызвать
+  `OverlayForm.Finish()` / `OnPaint` через reflection и посмотреть на картинку.
+- Изменения в хуке, буфере обмена, DPI и фокусе нельзя проверить вне Windows. В описании
+  изменения это ДОЛЖНО быть сказано прямо, и пользователь проверяет их на своей машине.
+- Если меняется видимое пользователю поведение, в том же изменении обновляется `README.md`
+  (раздел «Как пользоваться» / меню трея).
+- Структура кода: `Program` — запуск; `TrayApp` — трей, меню, оркестрация; `KeyboardHook` —
+  перехват клавиш; `OverlayForm` — выделение и пометки; `Batch` — пачка и буфер обмена;
+  `Settings` — ini; `Toast` — уведомления; `Native` — WinAPI. Новый функционал
+  встраивается в эти границы, а не в произвольные места.
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+- Эта конституция главнее остальных договорённостей. `CLAUDE.md` — краткая рабочая памятка,
+  выведенная из неё; если они расходятся, прав этот документ.
+- Поправки вносятся через `/speckit-constitution` с обновлением версии по semver: MAJOR —
+  принцип удалён или переопределён, MINOR — добавлен новый принцип или раздел, PATCH —
+  уточнения формулировок.
+- Каждый план (`/speckit-plan`) и каждая проверка изменений ДОЛЖНЫ сверяться с принципами I–V.
+  Отступление допускается только с письменным обоснованием в плане.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 1.0.0 | **Ratified**: 2026-10-31 | **Last Amended**: 2026-11-01
