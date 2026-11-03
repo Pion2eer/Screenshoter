@@ -7,9 +7,10 @@ namespace Screenshoter
     static class Program
     {
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
             Native.EnableDpiAwareness();
+            bool updated = Updater.HandleStartup(args);   // после обновления ждём, пока закроется старая копия
             bool created;
             using (Mutex m = new Mutex(true, "Screenshoter_SingleInstance_5d1e", out created))
             {
@@ -24,7 +25,7 @@ namespace Screenshoter
                 {
                     try { Toast.ShowText("Ошибка: " + e.Exception.Message); } catch { }
                 };
-                Application.Run(new TrayApp());
+                Application.Run(new TrayApp(updated));
             }
         }
     }

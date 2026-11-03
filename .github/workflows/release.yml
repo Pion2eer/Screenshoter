@@ -1,0 +1,43 @@
+# Сборка релиза: запушь тег вида v1.2.0 — GitHub соберёт Screenshoter.exe и выложит его в Releases.
+# Кнопка «Проверить обновления» в программе берёт exe из последнего релиза.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Номер версии, например 1.2.0'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Версия из тега
+        shell: pwsh
+        run: |
+          $v = if ('${{ github.event_name }}' -eq 'workflow_dispatch') { '${{ inputs.version }}' } else { '${{ github.ref_name }}' }
+          $v = $v.TrimStart('v')
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "Номер версии должен быть вида 1.2.3, а не '$v'" }
+          (Get-Content src/Version.cs -Raw -Encoding UTF8) -replace '"\d+\.\d+\.\d+"', "`"$v`"" | Set-Content src/Version.cs -Encoding UTF8 -NoNewline
+          "VERSION=$v" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Сборка встроенным csc
+        shell: cmd
+        run: |
+          "%WINDIR%\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /codepage:65001 /optimize+ /out:Screenshoter.exe /r:System.Windows.Forms.dll /r:System.Drawing.dll /win32icon:src\app.ico /resource:src\app.ico,Screenshoter.app.ico src\*.cs
+
+      - name: Релиз
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v$env:VERSION"
+          gh release create $tag Screenshoter.exe --title "Скриншотер $env:VERSION" --generate-notes --target $env:GITHUB_SHA
