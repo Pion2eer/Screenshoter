@@ -22,7 +22,7 @@ namespace Screenshoter
 
         ToolStripMenuItem miNewBatch, miRestore, miFiles, miStitch, miNumbers, miResetAfterPaste, miWinShiftS, miPrtSc, miAutostart, miSystemSnip;
 
-        public TrayApp()
+        public TrayApp(bool updated)
         {
             settings = Settings.Load();
             batch = new Batch(settings);
@@ -50,8 +50,17 @@ namespace Screenshoter
 
             if (!hook.Installed)
                 Toast.ShowText("Не удалось перехватить клавиши. Скрин можно сделать двойным кликом по иконке в трее.");
+            else if (updated)
+                Toast.ShowText("Скриншотер обновлён до версии " + Updater.CurrentText + ".");
             else
                 Toast.ShowText("Скриншотер запущен. " + HotkeyText() + " — сделать скрин.");
+
+            Updater.Exit = ExitThread;
+            // тихая проверка обновлений через полминуты после запуска: сообщим, только если вышла новая версия
+            Timer updTimer = new Timer();
+            updTimer.Interval = 30000;
+            updTimer.Tick += delegate { updTimer.Stop(); updTimer.Dispose(); Updater.Check(invoker, true); };
+            updTimer.Start();
         }
 
         string HotkeyText()
@@ -151,6 +160,7 @@ namespace Screenshoter
             {
                 try { Directory.CreateDirectory(Batch.Root); Process.Start("explorer.exe", "\"" + Batch.Root + "\""); } catch { }
             });
+            Item(m, "Проверить обновления (версия " + Updater.CurrentText + ")", delegate { Updater.Check(invoker, false); });
             Item(m, "Выход", delegate { ExitThread(); });
 
             m.Opening += delegate
