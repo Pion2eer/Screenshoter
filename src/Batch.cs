@@ -21,13 +21,18 @@ namespace Screenshoter
         string dir;
         string batchId = "";
         bool pasted;
+        List<string> previous = new List<string>(); // прошлая пачка, чтобы её можно было вернуть
+        public bool StartedAfterPaste;              // последний Add начал новую пачку, потому что старую вставили
 
         public Batch(Settings settings) { this.settings = settings; }
 
-        // Пачка «живая», если в ней есть скрины, её ещё не вставляли и буфер всё ещё наш.
+        // Пачка «живая», пока в ней есть скрины и её не вставили по Ctrl+V.
+        // Что лежит в буфере, на пачку НЕ влияет: другие программы (Parsec, менеджеры буфера,
+        // обычное копирование текста) перезаписывают буфер, и раньше из-за этого пачка
+        // молча начиналась заново. Теперь следующий скрин просто снова кладёт всю пачку в буфер.
         public bool IsAlive
         {
-            get { return files.Count > 0 && !pasted && ClipboardIsOurs(); }
+            get { return files.Count > 0 && !pasted; }
         }
 
         public int Count { get { return IsAlive ? files.Count : 0; } }
@@ -51,6 +56,7 @@ namespace Screenshoter
 
         void Reset()
         {
+            if (files.Count > 0) previous = new List<string>(files);
             files.Clear();
             pasted = false;
             batchId = Guid.NewGuid().ToString("N");
@@ -59,10 +65,17 @@ namespace Screenshoter
 
         public int Add(Bitmap shot)
         {
-            if (!IsAlive) Reset();
+            StartedAfterPaste = false;
+            if (!IsAlive)
+            {
+                StartedAfterPaste = pasted && files.Count > 0;
+                Reset();
+            }
             Directory.CreateDirectory(dir);
             int n = files.Count + 1;
             string path = Path.Combine(dir, "screenshot-" + n + ".png");
+            for (int k = 2; File.Exists(path); k++)
+                path = Path.Combine(dir, "screenshot-" + n + "-" + k + ".png");
             shot.Save(path, ImageFormat.Png);
             files.Add(path);
             PutToClipboard();
@@ -142,9 +155,35 @@ namespace Screenshoter
         public void StartNew()
         {
             try { if (files.Count > 0 && ClipboardIsOurs()) Clipboard.Clear(); } catch { }
+            if (files.Count > 0) previous = new List<string>(files);
             files.Clear();
             pasted = false;
             batchId = "";
+        }
+
+        public int PreviousCount { get { return ExistingPrevious().Count; } }
+
+        List<string> ExistingPrevious()
+        {
+            List<string> res = new List<string>();
+            foreach (string f in previous) if (File.Exists(f)) res.Add(f);
+            return res;
+        }
+
+        // Вернуть прошлую пачку: она снова становится текущей и кладётся в буфер.
+        public int RestorePrevious()
+        {
+            List<string> prev = ExistingPrevious();
+            if (prev.Count == 0) return 0;
+            List<string> cur = new List<string>(files);
+            files.Clear();
+            files.AddRange(prev);
+            previous = cur;
+            pasted = false;
+            batchId = Guid.NewGuid().ToString("N");
+            dir = Path.GetDirectoryName(prev[prev.Count - 1]);
+            PutToClipboard();
+            return files.Count;
         }
 
         public static void Cleanup()
@@ -156,7 +195,7 @@ namespace Screenshoter
                 {
                     try
                     {
-                        if (Directory.GetCreationTime(d) < DateTime.Now.AddDays(-1)) Directory.Delete(d, true);
+                        if (Directory.GetCreationTime(d) < DateTime.Now.AddDays(-3)) Directory.Delete(d, true);
                     }
                     catch { }
                 }
