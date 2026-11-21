@@ -41,6 +41,10 @@ namespace Screenshoter
                 UpdateTooltip();
             };
 
+            // После сна, блокировки или переподключения Windows может тихо снять хук — ставим заново.
+            SystemEvents.PowerModeChanged += OnPowerModeChanged;
+            SystemEvents.SessionSwitch += OnSessionSwitch;
+
             tray = new NotifyIcon();
             tray.Icon = MakeIcon();
             tray.ContextMenuStrip = BuildMenu();
@@ -63,6 +67,18 @@ namespace Screenshoter
             updTimer.Start();
         }
 
+        void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
+        {
+            if (e.Mode == PowerModes.Resume) hook.Reinstall();
+        }
+
+        void OnSessionSwitch(object sender, SessionSwitchEventArgs e)
+        {
+            if (e.Reason == SessionSwitchReason.SessionUnlock || e.Reason == SessionSwitchReason.SessionLogon ||
+                e.Reason == SessionSwitchReason.ConsoleConnect || e.Reason == SessionSwitchReason.RemoteConnect)
+                hook.Reinstall();
+        }
+
         string HotkeyText()
         {
             if (settings.WinShiftS && settings.PrintScreen) return "Win+Shift+S или PrtSc";
@@ -75,6 +91,7 @@ namespace Screenshoter
         {
             hook.CatchWinShiftS = settings.WinShiftS;
             hook.CatchPrintScreen = settings.PrintScreen;
+            hook.SettingsChanged();
         }
 
         void UpdateTooltip()
@@ -308,6 +325,8 @@ namespace Screenshoter
 
         protected override void ExitThreadCore()
         {
+            SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+            SystemEvents.SessionSwitch -= OnSessionSwitch;
             hook.Dispose();
             tray.Visible = false;
             tray.Dispose();
