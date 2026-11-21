@@ -55,6 +55,12 @@ namespace Screenshoter
         public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr pid);
         [DllImport("kernel32.dll")]
         public static extern uint GetCurrentThreadId();
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool RegisterHotKey(IntPtr hWnd, int id, uint mods, uint vk);
+        [DllImport("user32.dll")]
+        public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+        [DllImport("user32.dll")]
+        public static extern IntPtr SetTimer(IntPtr hWnd, IntPtr id, uint elapseMs, IntPtr timerProc);
         [DllImport("user32.dll")]
         public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool attach);
         [DllImport("user32.dll")]
